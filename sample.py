@@ -239,6 +239,10 @@ def main(args, rank, master_port):
 
                 if int(args.seed) != 0:
                     torch.random.manual_seed(int(args.seed))
+                    cur_seed = int(args.seed)
+                else:
+                    cur_seed = random.randint(0, 2 ** 32 - 1)
+                    torch.random.manual_seed(cur_seed)
 
                 sample_id = f'{idx}_{res.split(":")[-1]}'
                 if isinstance(item, str):
@@ -319,18 +323,16 @@ def main(args, rank, master_port):
                 samples = (samples + 1.0) / 2.0
                 samples.clamp_(0.0, 1.0)
                 print("sample times:", end_time-start_time)
-                print("result saved at:", f"{args.image_save_path}/images/{args.solver}_{args.num_sampling_steps}_{sample_id}_{cur_time}.png")
-
                 # Save samples to disk as individual .png files
                 for i, (sample, cap) in enumerate(zip(samples, caps_list)):
                     img = to_pil_image(sample.float())
-                    cur_time = time.strftime("%Y%m%d-%H%M%S")
-                    save_path = f"{args.image_save_path}/images/{args.solver}_{args.num_sampling_steps}_{sample_id}_{cur_time}.png"
+                    save_path = f"{args.image_save_path}/images/{args.solver}_{cur_seed}_{args.num_sampling_steps}_{sample_id}.png"
                     img.save(save_path)
+                    print(f"Saved sample {i} to {save_path}")
                     info.append(
                         {
                             "caption": cap,
-                            "image_url": f"{args.image_save_path}/images/{args.solver}_{args.num_sampling_steps}_{sample_id}_{cur_time}.png",
+                            "image_url": save_path,
                             "resolution": f"res: {resolution}\ntime_shift: {args.time_shifting_factor}",
                             "solver": args.solver,
                             "num_sampling_steps": args.num_sampling_steps,
