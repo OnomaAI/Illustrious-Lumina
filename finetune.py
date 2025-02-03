@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 """
-A minimal training script for Lumina-T2I using PyTorch FSDP.
+A minimal training script for Lumina-T2I using PyTorch FSDP with wandb logging.
 """
 import argparse
 from collections import OrderedDict, defaultdict
@@ -49,6 +49,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from transformers import AutoModel, AutoTokenizer
 
+import wandb  # <--- (1) Import wandb
+
 from data import DataNoReportException, ItemProcessor, MyDataset, read_general
 from imgproc import generate_crop_size_list, to_rgb_if_rgba, var_center_crop
 import models
@@ -68,21 +70,35 @@ class T2IItemProcessor(ItemProcessor):
         self.image_transform = transform
         self.special_format_set = set()
 
-
     def process_item(self, data_item, training_mode=False):
         if "super_high_quality_caption" in data_item:
             url = data_item["image_path"]
             image = Image.open(read_general(url))
             text = data_item["super_high_quality_caption"]
-            system_prompt = "You are an assistant designed to generate high-quality images with the highest degree of image-text alignment based on textual prompts. <Prompt Start> "  # noqa
+            system_prompt = (
+                "You are an assistant designed to generate high-quality images "
+                "with the highest degree of image-text alignment based on textual "
+                "prompts. <Prompt Start> "
+            )
         elif "path" in data_item:
             url = data_item["path"]
             image = Image.open(read_general(url))
             text = data_item["prompt"]
-            system_prompt = "You are an assistant designed to generate high-quality images based on user prompts. <Prompt Start> "  # noqa
+            system_prompt = (
+                "You are an assistant designed to generate high-quality images "
+                "based on user prompts. <Prompt Start> "
+            )
+        elif "image_path" in data_item:
+            url = data_item["image_path"]
+            image = Image.open(read_general(url))
+            text = data_item["prompt"]
+            system_prompt = (
+                "You are an assistant designed to generate high-quality images "
+                "based on user prompts based on danbooru tags. <Prompt Start> "
+            )
         else:
             raise ValueError(f"Unrecognized item: {data_item}")
-            
+
         if image.mode.upper() != "RGB":
             mode = image.mode.upper()
             if mode not in self.special_format_set:
@@ -94,7 +110,7 @@ class T2IItemProcessor(ItemProcessor):
                 image = image.convert("RGB")
             else:
                 raise NonRGBError()
-            
+
         image = self.image_transform(image)
 
         if text is None or text.strip() == "":
@@ -110,13 +126,6 @@ class T2IItemProcessor(ItemProcessor):
 def apply_average_pool(latent, factor):
     """
     Apply average pooling to downsample the latent.
-
-    Args:
-        latent (torch.Tensor): Latent tensor with shape (1, C, H, W).
-        factor (int): Downsampling factor.
-
-    Returns:
-        torch.Tensor: Downsampled latent tensor.
     """
     return F.avg_pool2d(latent, kernel_size=factor, stride=factor)
 
@@ -124,7 +133,6 @@ def dataloader_collate_fn(samples):
     image = [x[0] for x in samples]
     caps = [x[1] for x in samples]
     return image, caps
-
 
 def get_train_sampler(dataset, rank, world_size, global_batch_size, max_steps, resume_step, seed):
     sample_indices = torch.empty([max_steps * global_batch_size // world_size], dtype=torch.long)
@@ -141,7 +149,6 @@ def get_train_sampler(dataset, rank, world_size, global_batch_size, max_steps, r
         fill_ptr += epoch_sample_indices.size(0)
     return sample_indices[resume_step * global_batch_size // world_size :].tolist()
 
-
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.95):
     """
@@ -152,16 +159,13 @@ def update_ema(ema_model, model, decay=0.95):
     assert set(ema_params.keys()) == set(model_params.keys())
 
     for name, param in model_params.items():
-        # TODO: Consider applying only to params that require_grad to avoid small numerical changes of pos_embed
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
-
 
 def cleanup():
     """
     End DDP training.
     """
     dist.destroy_process_group()
-
 
 def create_logger(logging_dir):
     """
@@ -174,7 +178,7 @@ def create_logger(logging_dir):
             datefmt="%Y-%m-%d %H:%M:%S",
             handlers=[
                 logging.StreamHandler(),
-                logging.FileHandler(f"{logging_dir}/log.txt"),
+                logging.FileHandler(f"{logging_dir}/log.txt") if logging_dir else logging.NullHandler(),
             ],
         )
         logger = logging.getLogger(__name__)
@@ -182,7 +186,6 @@ def create_logger(logging_dir):
         logger = logging.getLogger(__name__)
         logger.addHandler(logging.NullHandler())
     return logger
-
 
 def setup_lm_fsdp_sync(model: nn.Module) -> FSDP:
     # LM FSDP always use FULL_SHARD among the node.
@@ -204,7 +207,6 @@ def setup_lm_fsdp_sync(model: nn.Module) -> FSDP:
     )
     torch.cuda.synchronize()
     return model
-
 
 def setup_fsdp_sync(model: nn.Module, args: argparse.Namespace) -> FSDP:
     model = FSDP(
@@ -241,7 +243,6 @@ def setup_fsdp_sync(model: nn.Module, args: argparse.Namespace) -> FSDP:
 
     return model
 
-
 def setup_mixed_precision(args):
     if args.precision == "tf32":
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -250,7 +251,6 @@ def setup_mixed_precision(args):
         pass
     else:
         raise NotImplementedError(f"Unknown precision: {args.precision}")
-
 
 # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
 def encode_prompt(prompt_batch, text_encoder, tokenizer, proportion_empty_prompts, is_train=True):
@@ -285,15 +285,13 @@ def encode_prompt(prompt_batch, text_encoder, tokenizer, proportion_empty_prompt
 
     return prompt_embeds, prompt_masks
 
-
 #############################################################################
 #                                Training Loop                              #
 #############################################################################
 
-
 def main(args):
     """
-    Trains a new DiT model.
+    Trains a new DiT model with optional wandb logging.
     """
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
@@ -308,8 +306,7 @@ def main(args):
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
     setup_mixed_precision(args)
-    print(f"Starting rank={rank}, seed={seed}, "
-          f"world_size={dist.get_world_size()}.")
+    print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
 
     # Setup an experiment folder:
     os.makedirs(args.results_dir, exist_ok=True)
@@ -323,6 +320,15 @@ def main(args):
                 args.results_dir, "tensorboard", datetime.now().strftime("%Y%m%d_%H%M%S_") + socket.gethostname()
             )
         )
+        
+        # ------------------- (2) Initialize wandb (main process) -------------------
+        wandb.init(
+            project="Lumina-T2I",  # Change to your W&B project name
+            name=os.path.basename(args.results_dir),
+            config=vars(args),
+            dir=args.results_dir,
+        )
+        
     else:
         logger = create_logger(None)
         tb_logger = None
@@ -332,12 +338,10 @@ def main(args):
     logger.info(f"Setting-up language model: google/gemma-2-2b")
 
     # create tokenizers
-    # Load the tokenizers
     tokenizer = AutoTokenizer.from_pretrained("google/gemma-2-2b")
     tokenizer.padding_side = "right"
 
     # create text encoders
-    # text_encoder
     text_encoder = AutoModel.from_pretrained(
         "google/gemma-2-2b",
         torch_dtype=torch.bfloat16,
@@ -366,7 +370,6 @@ def main(args):
         if args.resume is not None:
             logger.info(f"Auto resuming from: {args.resume}")
 
-    # Note that parameter initialization is done within the DiT constructor
     model_ema = deepcopy(model)
     if args.resume:
         if dp_rank == 0:  # other ranks receive weights in setup_fsdp_sync
@@ -420,7 +423,7 @@ def main(args):
             logger.info("Model initialization result:")
             logger.info(f"  Size mismatch keys: {size_mismatch_keys}")
             logger.info(f"  Missing keys: {missing_keys}")
-            logger.info(f"  Unexpeected keys: {unexpected_keys}")
+            logger.info(f"  Unexpected keys: {unexpected_keys}")
     dist.barrier()
 
     # checkpointing (part1, should be called before FSDP wrapping)
@@ -453,7 +456,7 @@ def main(args):
         )
 
     logger.info(f"model:\n{model}\n")
-    
+
     vae = AutoencoderKL.from_pretrained("black-forest-labs/FLUX.1-dev", subfolder="vae", torch_dtype=torch.bfloat16).to(
         device
     )
@@ -494,7 +497,7 @@ def main(args):
         logger.info(f"Creating data for resolution {train_res}")
 
         global_bsz = getattr(args, f"global_bsz_{train_res}")
-        local_bsz = global_bsz // dp_world_size  # todo caution for sequence parallel
+        local_bsz = global_bsz // dp_world_size
         micro_bsz = getattr(args, f"micro_bsz_{train_res}")
         assert global_bsz % dp_world_size == 0, "Batch size must be divisible by data parallel world size."
         logger.info(f"Global bsz: {global_bsz} Local bsz: {local_bsz} Micro bsz: {micro_bsz}")
@@ -521,7 +524,8 @@ def main(args):
         )
         num_samples = global_bsz * args.max_steps
         logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
-        logger.info(f"Total # samples to consume: {num_samples:,} " f"({num_samples / len(dataset):.2f} epochs)")
+        logger.info(f"Total # samples to consume: {num_samples:,} "
+                    f"({num_samples / len(dataset):.2f} epochs)")
         sampler = get_train_sampler(
             dataset,
             dp_rank,
@@ -529,7 +533,7 @@ def main(args):
             global_bsz,
             args.max_steps,
             resume_step,
-            args.global_seed + train_res * 100,  # avoid same sampling for different resolutions
+            args.global_seed + train_res * 100,
         )
         loader = DataLoader(
             dataset,
@@ -540,7 +544,6 @@ def main(args):
             collate_fn=dataloader_collate_fn,
         )
 
-        # default: 1000 steps, linear noise schedule
         transport = create_transport(
             "Linear",
             "velocity",
@@ -550,7 +553,7 @@ def main(args):
             snr_type=args.snr_type,
             do_shift=not args.no_shift,
             seq_len=(train_res // 16) ** 2,
-        )  # default: velocity;
+        )
 
         data_collection[train_res] = {
             "loader": loader,
@@ -564,8 +567,6 @@ def main(args):
 
     # Prepare models for training:
     model.train()
-
-    # Variables for monitoring/logging purposes:
 
     logger.info(f"Training for {args.max_steps:,} steps...")
 
@@ -596,7 +597,6 @@ def main(args):
                 if step == resume_step:
                     warnings.warn(f"vae scale: {vae_scale}    vae shift: {vae_shift}")
                 # Map input images to latent space + normalize latents:
-
                 for i, img in enumerate(x):
                     x[i] = (vae.encode(img[None].bfloat16()).latent_dist.mode()[0] - vae_shift) * vae_scale
                     x[i] = x[i].float()
@@ -627,9 +627,7 @@ def main(args):
                 last_mb = mb_ed == data_pack["local_bsz"]
 
                 x_mb = x[mb_st:mb_ed]
-
-                ### muti resolution
-                x_mb_256 = [apply_average_pool(x, 4) for x in x_mb]
+                x_mb_256 = [apply_average_pool(xx, 4) for xx in x_mb]
 
                 cap_feats_mb = cap_feats[mb_st:mb_ed]
                 cap_mask_mb = cap_mask[mb_st:mb_ed]
@@ -643,6 +641,7 @@ def main(args):
                 }[args.precision]:
                     loss_dict = data_pack["transport"].training_losses(model, x_mb, model_kwargs)
                     loss_dict_256 = data_pack["transport"].training_losses(model, x_mb_256, model_kwargs)
+
                 loss_1024 = loss_dict["loss"].sum() / data_pack["local_bsz"]
                 loss_256 = loss_dict_256["loss"].sum() / data_pack["local_bsz"]
                 loss = loss_1024 + loss_256
@@ -653,47 +652,72 @@ def main(args):
                     loss.backward()
 
                 # for bin-wise loss recording
-                # Digitize t values to find which bin they belong to
                 bin_indices = torch.bucketize(loss_dict["t"].cuda(), loss_bins, right=True) - 1
                 detached_loss = loss_dict["loss"].detach()
-                bin_indices_256 = torch.bucketize(loss_dict_256["t"].cuda(), loss_bins, right=True) - 1
+                bin_indices_256 = torch.bucketize(loss_dict_256["t"].cuda(), loss_bins_256, right=True) - 1
                 detached_loss_256 = loss_dict_256["loss"].detach()
 
-                # Iterate through each bin index to update occurrence and sum
-                for i in range(n_loss_bins):
-                    mask = bin_indices == i  # Mask for elements in the i-th bin
-                    bin_occurrence[i] = bin_occurrence[i] + mask.sum()  # Count occurrences in the i-th bin
-                    bin_sum_loss[i] = bin_sum_loss[i] + detached_loss[mask].sum()  # Sum loss values in the i-th bin
-                for i in range(n_loss_bins):
-                    mask = bin_indices_256 == i
-                    bin_occurrence_256[i] = bin_occurrence_256[i] + mask.sum()
-                    bin_sum_loss_256[i] = bin_sum_loss_256[i] + detached_loss_256[mask].sum()
+                for i_bin in range(n_loss_bins):
+                    mask_1024 = bin_indices == i_bin
+                    mask_256 = bin_indices_256 == i_bin
+                    bin_occurrence[i_bin] += mask_1024.sum()
+                    bin_sum_loss[i_bin] += detached_loss[mask_1024].sum()
+                    bin_occurrence_256[i_bin] += mask_256.sum()
+                    bin_sum_loss_256[i_bin] += detached_loss_256[mask_256].sum()
 
             grad_norm = model.clip_grad_norm_(max_norm=args.grad_clip)
-
             dist.all_reduce(bin_occurrence)
             dist.all_reduce(bin_sum_loss)
             dist.all_reduce(bin_occurrence_256)
             dist.all_reduce(bin_sum_loss_256)
+
+            # Log to TensorBoard & W&B
             if tb_logger is not None:
                 tb_logger.add_scalar(f"{train_res}/loss", loss_item, step)
                 tb_logger.add_scalar(f"{train_res}/loss_256", loss_256_item, step)
                 tb_logger.add_scalar(f"{train_res}/loss_1024", loss_1024_item, step)
                 tb_logger.add_scalar(f"{train_res}/grad_norm", grad_norm, step)
                 tb_logger.add_scalar(f"{train_res}/lr", opt.param_groups[0]["lr"], step)
-                for i in range(n_loss_bins):
-                    if bin_occurrence[i] > 0:
-                        bin_avg_loss = (bin_sum_loss[i] / bin_occurrence[i]).item()
-                        tb_logger.add_scalar(f"{train_res}/loss-bin{i+1}-{n_loss_bins}", bin_avg_loss, step)
-                for i in range(n_loss_bins):
-                    if bin_occurrence_256[i] > 0:
-                        bin_avg_loss = (bin_sum_loss_256[i] / bin_occurrence_256[i]).item()
-                        tb_logger.add_scalar(f"{train_res}/loss_256-bin{i+1}-{n_loss_bins}", bin_avg_loss, step)
+                for i_bin in range(n_loss_bins):
+                    if bin_occurrence[i_bin] > 0:
+                        bin_avg_loss = (bin_sum_loss[i_bin] / bin_occurrence[i_bin]).item()
+                        tb_logger.add_scalar(
+                            f"{train_res}/loss-bin{i_bin+1}-{n_loss_bins}",
+                            bin_avg_loss,
+                            step,
+                        )
+                    if bin_occurrence_256[i_bin] > 0:
+                        bin_avg_loss_256 = (bin_sum_loss_256[i_bin] / bin_occurrence_256[i_bin]).item()
+                        tb_logger.add_scalar(
+                            f"{train_res}/loss_256-bin{i_bin+1}-{n_loss_bins}",
+                            bin_avg_loss_256,
+                            step,
+                        )
+
+            # ------------------- (3) Log metrics to wandb (main process only) -------------------
+            if rank == 0:
+                log_dict = {
+                    f"{train_res}/loss": loss_item,
+                    f"{train_res}/loss_256": loss_256_item,
+                    f"{train_res}/loss_1024": loss_1024_item,
+                    f"{train_res}/grad_norm": grad_norm,
+                    f"{train_res}/lr": opt.param_groups[0]["lr"],
+                }
+                for i_bin in range(n_loss_bins):
+                    if bin_occurrence[i_bin] > 0:
+                        log_dict[f"{train_res}/loss-bin{i_bin+1}-{n_loss_bins}"] = (
+                            bin_sum_loss[i_bin] / bin_occurrence[i_bin]
+                        ).item()
+                    if bin_occurrence_256[i_bin] > 0:
+                        log_dict[f"{train_res}/loss_256-bin{i_bin+1}-{n_loss_bins}"] = (
+                            bin_sum_loss_256[i_bin] / bin_occurrence_256[i_bin]
+                        ).item()
+                wandb.log(log_dict, step=step)
 
             opt.step()
             end_time = time()
 
-            # Log loss values:
+            # Update training stats
             metrics = data_pack["metrics"]
             metrics["loss"].update(loss_item)
             metrics["loss_1024"].update(loss_1024_item)
@@ -701,21 +725,24 @@ def main(args):
             metrics["grad_norm"].update(grad_norm)
             metrics["Secs/Step"].update(end_time - start_time)
             metrics["Imgs/Sec"].update(data_pack["global_bsz"] / (end_time - start_time))
-            metrics["grad_norm"].update(grad_norm)
-            for i in range(n_loss_bins):
-                if bin_occurrence[i] > 0:
-                    bin_avg_loss = (bin_sum_loss[i] / bin_occurrence[i]).item()
-                    metrics[f"bin_1024_{i + 1:02}-{n_loss_bins}"].update(bin_avg_loss, int(bin_occurrence[i].item()))
-            for i in range(n_loss_bins):
-                if bin_occurrence_256[i] > 0:
-                    bin_avg_loss = (bin_sum_loss_256[i] / bin_occurrence_256[i]).item()
-                    metrics[f"bin_256_{i + 1:02}-{n_loss_bins}"].update(bin_avg_loss, int(bin_occurrence_256[i].item()))
+
+            for i_bin in range(n_loss_bins):
+                if bin_occurrence[i_bin] > 0:
+                    bin_avg_loss = (bin_sum_loss[i_bin] / bin_occurrence[i_bin]).item()
+                    metrics[f"bin_1024_{i_bin + 1:02}-{n_loss_bins}"].update(
+                        bin_avg_loss, int(bin_occurrence[i_bin].item())
+                    )
+                if bin_occurrence_256[i_bin] > 0:
+                    bin_avg_loss_256 = (bin_sum_loss_256[i_bin] / bin_occurrence_256[i_bin]).item()
+                    metrics[f"bin_256_{i_bin + 1:02}-{n_loss_bins}"].update(
+                        bin_avg_loss_256, int(bin_occurrence_256[i_bin].item())
+                    )
+
             if (step + 1) % args.log_every == 0:
-                # Measure training speed:
                 torch.cuda.synchronize()
                 logger.info(
                     f"Res{train_res}_{train_res//4}: (step{step + 1:07d}) "
-                    + f"lr{opt.param_groups[0]['lr']:.6f} "
+                    f"lr{opt.param_groups[0]['lr']:.6f} "
                     + " ".join([f"{key}:{str(metrics[key])}" for key in sorted(metrics.keys())])
                 )
 
@@ -786,16 +813,11 @@ def main(args):
             dist.barrier()
             logger.info(f"Saved training arguments to {checkpoint_path}.")
 
-    model.eval()  # important! This disables randomized embedding dropout
-    # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
-
+    model.eval()
     logger.info("Done!")
     cleanup()
 
-
 if __name__ == "__main__":
-    # Default args here will train DiT_Llama2_7B_patch2 with the
-    # hyperparameters we used in our paper (except training iters).
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--cache_data_on_disk", default=False, action="store_true")
@@ -825,9 +847,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--init_from",
         type=str,
-        help="Initialize the model weights from a checkpoint folder. "
-        "Compared to --resume, this loads neither the optimizer states "
-        "nor the data loader states.",
+        help=(
+            "Initialize the model weights from a checkpoint folder. Compared to --resume, "
+            "this loads neither the optimizer states nor the data loader states."
+        ),
     )
     parser.add_argument(
         "--grad_clip", type=float, default=2.0, help="Clip the L2 norm of the gradients to the given value."
@@ -838,10 +861,7 @@ if __name__ == "__main__":
         default=0.0,
         help="Weight decay for the optimizer.",
     )
-    parser.add_argument(
-        "--qk_norm",
-        action="store_true",
-    )
+    parser.add_argument("--qk_norm", action="store_true")
     parser.add_argument(
         "--caption_dropout_prob",
         type=float,
@@ -849,10 +869,7 @@ if __name__ == "__main__":
         help="Randomly change the caption of a sample to a blank string with the given probability.",
     )
     parser.add_argument("--snr_type", type=str, default="uniform")
-    parser.add_argument(
-        "--no_shift",
-        action="store_true",
-    )
+    parser.add_argument("--no_shift", action="store_true")
     args = parser.parse_args()
 
     main(args)
