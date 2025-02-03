@@ -6,3 +6,4 @@ transformers
 gradio
 torchdiffeq
 click
+h5py
