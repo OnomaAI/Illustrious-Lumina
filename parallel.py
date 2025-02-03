@@ -20,11 +20,16 @@ def _setup_dist_env_from_slurm(args):
             .strip()
         )
         sleep(1)
-    os.environ["MASTER_PORT"] = str(args.master_port)
-    os.environ["RANK"] = os.environ["SLURM_PROCID"]
-    os.environ["WORLD_SIZE"] = os.environ["SLURM_NPROCS"]
-    os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
-    os.environ["LOCAL_WORLD_SIZE"] = os.environ["SLURM_NTASKS_PER_NODE"]
+    if not os.environ.get("MASTER_PORT"):
+        os.environ["MASTER_PORT"] = str(args.master_port)
+    if not os.environ.get("WORLD_SIZE"):
+        os.environ["WORLD_SIZE"] = os.environ["SLURM_NPROCS"]
+    if not os.environ.get("RANK"):
+        os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    if not os.environ.get("LOCAL_RANK"):
+        os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
+    if not os.environ.get("LOCAL_WORLD_SIZE"):
+        os.environ["LOCAL_WORLD_SIZE"] = os.environ["SLURM_NTASKS_PER_NODE"]
 
 
 _INTRA_NODE_PROCESS_GROUP, _INTER_NODE_PROCESS_GROUP = None, None
