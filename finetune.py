@@ -1,9 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # All rights reserved.
 
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 A minimal training script for Lumina-T2I using PyTorch FSDP with wandb logging.
 """
@@ -57,6 +54,243 @@ import models
 from parallel import distributed_init, get_intra_node_process_group
 from transport import create_transport
 from util.misc import SmoothedValue
+#############################################################################
+#                           Danbooru prompt processor for safety control                              #
+CONVERTABLE_DICT = {
+    "masterpiece" : ["amazing quality", "masterpiece", "masterpiece quality", "top quality", "most preferred", "professional"],
+    "best quality" : ["best quality", "good", "high quality", "preferred", "best drawing", "best"],
+    "bad quality" : ["bad quality", "low quality", "poor quality", "bad drawing", "badly drawn"],
+    "worst quality" : ["displeasing", "worst drawing", "amateur", "worst quality"],
+    "1girl" : ["one girl", "female", "girl", "female", "1girl", "woman"],
+    "1boy" : ["one boy", "one male", "boy", "male", "1boy", "man"],
+    "2boys" : ["two boys", "2boys", "2boy", "two male", "two men"],
+    "2girls" : ["2girls", "two girls", "two female", "two women"],
+    "3boys" : ["three boys", "3boys", "three male"],
+    "3girls" : ["three girls", "3girls", "three female"],
+    "lineart" : ["line drawing", "lineart", "line art"],
+    "no lineart" : ["no lineart", "vector art", "without lines"],
+    "lowres" : ["low resolution", "lowres", "low res", "low image quality"],
+    "pov" : ["point of view", "pov", "first person view", "first person perspective"],
+    "censor" : ["censored", "censor", "censorship"],
+    "doctor (arknights)" : ["doctor (arknights)", "arknights doctor", "arknights protagonist"],
+    "female doctor (arknights)" : ["female doctor (arknights)", "arknights female doctor"],
+    "highres" : ["high resolution", "highres", "high res", "high image quality"],
+    "solo" : ["solo", "alone", "single person", "single character", "single view", "protagonist"],
+    "solo focus" : ["focus on single character", "solo focus", "single character focus"],
+    "long hair" : ["long hair", "long haired", "long haired character"],
+    "looking at viewer" : ["looking at camera", "looking at viewer", "eye contact", "looking at you"],
+    "blush" : ["blush", "blushing", "embarrassed"],
+    "simple background" : ["simple background", "plain background", "simple bg", "focus on character"],
+    "full body" : ["full body", "full body shot", "full body view"],
+    "upper body" : ["upper body", "upper body shot", "upper body view", "focusing on torso", "without legs focus"],
+    "lower body" : ["lower body", "lower body shot", "lower body view", "without head focus"],
+    "monochrome" : ["monochrome", "single toned", "gradient with one color"],
+    "cowboy shot" : ["cowboy shot", "cowboy angle", "cowboy view", "cropped at thighs"],
+    "greyscale" : ["greyscale", "grayscale", "without color", "black and white"],
+    "nude" : ["nude", "naked", "nude character"],
+    "alternate costume" : ["alternate costume", "alternate outfit", "alternate attire"],
+    "day" : ["day", "daytime", "daylight", "sunny"],
+    "night" : ["night", "nighttime", "dark", "moonlight"],
+    "shadow" : ["shadow", "shadows", "shadowed", "shading"],
+    "artist name" : ["artist name", "artist signature"],
+    "close-up" : ["close-up", "close up", "closeup", "close shot", "close view"],
+    "mugshot" :["mugshot", "mug shot", "mugshot view", "mug shot view", "criminal photo"],
+    "lineup" : ["lineup", "line up", "line-up", "group shot", "group photo"],
+    "signature" : ["signature", "artist signature"],
+    "profile" : ["profile", "side profile", "profile view", "side view", "from side"],
+    "multiple views" : ["multiple views", "multiple shots"],
+    "from above" : ["from above", "aerial view", "top view", "high angle"],
+    "from below" : ["from below", "low angle", "from beneath", "from under"],
+    "from behind" : ["from behind", "rear view", "from the back", "back view"],
+    "from side" : ["from side", "side view", "lateral view", "profile view"],
+    "straight-on" : ["straight-on", "front view", "frontal view", "direct view"],
+    "looking back" : ["looking back", "looking behind", "looking over shoulder"],
+    "dutch angle" : ["dutch angle", "tilted angle", "slanted angle", "german angle", "oblique angle"],
+    "sideways" : ["sideways", "rotated image"],
+    "general" : ["general", "", "safe for work", "sfw", "safe"],
+    "sensitive" : ["sfw", "casual", "sensitive"],
+    "questionable" : ["nsfw", "with partial nudity", "questionable", "questionable content"],
+    "explicit" : ["explicit", "nsfw", "with nudity", "adult content", "explicit material"],
+}
+
+popular_chars_names = ["momiji", "character", "futo", "inaba", "yor", "seija", "stout", "sakuya", "yazawa", "tamamo", "ellen", "d'arc", "murasa", "misaka", "hearn", "kisaragi", "kaku", "ichinose", "hatate", "suwako", "douji", "aqua", "yoko", "samidare", "kikuchi", "nilou", "yuyuko", "sekibanki", "asashio", "rumia", "megurine", "kotori", "formidable", "frieren", "satori", "shijou", "kyrielight", "kanako", "remilia", "koakuma", "gardevoir", "littner", "princess", "d.va", "saber", "higuchi", "koishi", "bridget", "minami", "inkling", "monster", "kokomi", "miho", "kasodani", "houraisan", "kongou", "artoria", "chen", "pyra", "patchouli", "konpaku", "tojo", "mercury", "shinobu", "tewi", "suika", "izumi", "shiroko", "inazuma", "kurodani", "akemi", "fujiwara", "mononobe", "kokoro", "nagae", "azusa", "youmu", "oma", "kafka", "c.c.", "arisu", "abigail", "mae", "yumemi", "manhattan", "mona", "shirakami", "zhongli", "shibuya", "kawashiro", "kaenbyou", "zero", "nakano", "yuudachi", "tao", "eula", "hoshimachi", "kasen", "raiden", "yuugi", "takane", "murakumo", "hoshii", "watanabe", "rio", "minamoto", "kaname", "minato", "pendragon", "williams", "udongein", "shower", "super", "ryuuko", "himekaidou", "mirko", "cammy", "sayaka", "riamu", "reimu", "yasaka", "komeiji", "nightbug", "tachyon", "kokichi", "lumine", "utsuho", "rem", "tatsumaki", "shimamura", "sonoda", "takagaki", "shenhe", "kagerou", "miki", "houjuu", "lillie", "nagato", "senketsu", "amami", "player", "byakuren", "junko", "asuna", "kashima", "komachi", "kinomoto", "power", "kagamine", "kirisame", "kogasa", "sanae", "souji", "nico", "seiga", "mokou", "aran", "iono", "usami", "nazrin", "akiyama", "kamisato", "joe", "miku", "nozomi", "shooter", "nahida", "luka", "mythra", "claudius", "kyoko", "yagokoro", "iku", "aya", "kaede", "takina", "morrigan", "amiya", "gokou", "yoshika", "suzuya", "dawn", "kamishirasawa", "shuten", "okita", "joseph", "reisalin", "ruri", "haruka", "nitori", "marnie", "plana", "renko", "shameimaru", "samus", "makoto", "holo", "doll", "yuuka", "hinanawi", "hatsune", "shiranui", "daiyousei", "kanzaki", "magician", "rembran", "reiuji", "jougasaki", "tohsaka", "maki", "ibuki", "karin", "kai", "white", "oshino", "koharu", "bowsette", "eiki", "toki", "ayaka", "cafe", "sagiri", "yelan", "zeppeli", "zelda", "wriggle", "hata", "ganaha", "saigyouji", "shimakaze", "mayuzumi", "shogun", "lorelei", "einzbern", "fuyuko", "knowledge", "sonico", "tifa", "rensouhou-chan", "rin", "kyouko", "kaguya", "serval", "nino", "ranko", "madoka", "flandre", "kisaki", "hong", "illyasviel", "koume", "hamakaze", "chun-li", "miko", "oyama", "shanghai", "joestar", "uzuki", "umi", "yui", "kaga", "tomoe", "mika", "mash", "ganyu", "ibaraki", "fubuki", "miorine", "dark", "ayanami", "arona", "2b", "boo", "eirin", "kazusa", "mio", "aensland", "anthonio", "von", "meiling", "parsee", "tachibana", "warrior", "kitagawa", "fumika", "marine", "yamame", "alter", "marisa", "rikka", "megumin", "moriya", "sparkle", "nishizumi", "matoi", "takao", "raikou", "briar", "minamitsu", "rei", "imaizumi", "asuka", "kazami", "hk416", "shiki", "nero", "keine", "amatsukaze", "karyl", "hina", "chino", "mari", "nanami", "izayoi", "yae", "onozuka", "nishikigi", "nishikino", "yamato", "makima", "suigintou", "sagisawa","mizuhashi", "yotsuba", "chiaki", "margatroid", "ushio", "mikoto", "ayase", "mai", "hitori", "venti", "agnes", "scathach", "yoimiya", "gawr", "sagume", "ooyodo", "reisen", "chihaya", "haruhi", "gumi", "akagi", "souryuu", "hirasawa", "homura", "shigure", "hibiki", "yuzuki", "acheron", "link", "sakura", "ryuujou", "atago", "inubashiri", "mami", "nue", "yukari", "eugen", "jeanne", "gura", "firefly", "hestia", "anchovy", "haruna", "aru", "houshou", "gotoh", "akatsuki", "kishin", "alice", "kijin", "hijiri", "kagiyama", "yakumo", "suisei", "ro-500", "keqing", "testarossa", "scarlet", "iowa", "suletta", "tenshi", "langley", "lockhart", "tatara", "mystia", "adachi", "rosa", "hoshiguma", "yuki", "hakurei", "furina", "daiwa", "mahiro", "aris", "suzumiya", "kochiya", "inoue", "fate", "nami", "hunter", "tenryuu", "shirasaka", "astolfo", "caesar", "prinz", "marin", "toyosatomimi", "kafuu", "takarada", "hoshino", "clownpiece", "cynthia", "miyako", "darjeeling", "sangonomiya", "chisato", "rice", "ikazuchi", "cirno", "maribel", "mizumiya", "niko", "kikirara", "riona"]
+no_dropout_tokens = [
+    # "low ",
+    "lineart",
+    "l" + "o" + "l" + "i" , # oh no
+    "shota", # these are critical tags...
+    " art",
+    "foreshortening",
+    "exaggerat",
+    "disembodied",
+    "rough",
+    "sketch",
+    "amateur",
+    "displeasing",
+    "jaggy",
+    #"close up",
+    #"close-up",
+    "cropped",
+    "empty",
+    "plain",
+    # "from ",
+    # " body",
+    "multiple",
+    "artifact",
+    "toon",
+    "lowres",
+    "koma",
+    # "pov",
+    "censor",
+    "upside" # these are critical tags for image comprehension
+    "guro",
+    "scat",
+    "gore",
+    "cover", # now some scan / copyrighted material
+    "album",
+    "3d",
+    "render",
+    "name",
+    "logo",
+    "artist",
+    "sign",
+    "username",
+    "parody",
+    "manga",
+    "comic",
+    "letterbox",
+    "watermark",
+    "scan",
+    "doujin",
+    "anatomical nonsense", #for better body part recognition
+    "bad hands",
+    "bad feet",
+    "bad proportions",
+    "quality",
+    "bad aspect",
+    "extra digits",
+    "bad reflection",
+    "artistic",
+    "halo", # blue archive please
+    "poorly drawn",
+    #"chromatic",
+    "chiaroscuro",
+    " medium",
+    "cropped",
+    "tomboy", # these are some case that model might be confused
+    "trap",
+    "tomgirl",
+    "crossdressing",
+    "androgynous",
+    "futa", 
+    "girl", # gender / persons are important
+    "boy",
+    "men",
+    "female",
+    "cosplay",
+    "male",
+    "other",
+    "explicit",
+    "questionable",
+    "simple",
+    "underwear",
+    "panties",
+    "pubic",
+    "topless",
+#    "background",
+    "abstract",
+    "monochrome", "single toned", "gradient with one color",
+    "greyscale",
+    "various",
+    "koma",
+    "ai-generated" # mark the image is generated by AI
+] + [
+    "pus"+ "sy",
+    "nip"+"ple",
+    "pen"+"is",
+    "an" +"us" # sexual tokens should not be dropped and always checked
+    ]# The tokens that contains this will not be dropped
+
+no_dropout_tokens = set(no_dropout_tokens + popular_chars_names)
+strict_no_dropout_tokens = [
+    "explicit",
+    "questionable",
+    "sensitive",
+    "nsfw",
+    "nudity",
+    "adult content",
+    "photo",
+    "guro",
+    "koma",
+    "panties",
+    "underwear",
+    "lo" + "li",
+    "sho" + "ta",
+    "anime",
+    "comic",
+    "manga",
+    "multiple",
+    "chart",
+    "collage",
+    "diagram",
+    "sheet",
+    "lineup",
+    "panels",
+    "graph",
+    "turnaround",
+    "variation",
+    "expression",
+    "logo",
+    "username",
+    "text",
+    "copyright",
+    "artifact",
+    "family tree",
+    "bad ",
+    "sign",
+    "pubic",
+    "jaggy",
+    "topless",
+    "bottomless",
+    "twitter",
+    "scat",
+    "nude",
+    "naked",
+    "r-18",
+    "pus"+ "sy",
+    "nip"+"ple",
+    "pen"+"is",
+    "an" +"us", # sexual tokens should not be dropped and always checked
+    "real",
+    "figma"
+] # the tokens which should never be dropped out
+
+def dropout_tags(tags_string, dropout_p=0.35):
+    tags = tags_string.split(",")
+    tags = [t.strip() for t in tags]
+    tags = [t for t in tags if t]
+    random.shuffle(tags)
+    filtered = []
+    for t in tags:
+        if random.random() > dropout_p or t in no_dropout_tokens or check_strict_terms(t):
+            if t in CONVERTABLE_DICT:
+                tags_available = CONVERTABLE_DICT[t]
+                index = random.randint(0, len(tags_available)) # if 0, then it will be the same tag, else it will be a different tag
+                if index == 0:
+                    filtered.append(t)
+                else:
+                    filtered.append(tags_available[index-1])
+                continue
+            filtered.append(t)
+    return ", ".join(filtered)
+
+@functools.lru_cache(maxsize=16384)
+def check_strict_terms(tag):
+    for t in strict_no_dropout_tokens:
+        if t in tag:
+            return True
+    return False
+
 
 #############################################################################
 #                            Data item Processor                            #
@@ -92,6 +326,7 @@ class T2IItemProcessor(ItemProcessor):
             url = data_item["image_path"]
             image = Image.open(read_general(url))
             text = data_item["prompt"]
+            text = dropout_tags(text)
             system_prompt = (
                 "You are an assistant designed to generate high-quality images "
                 "based on user prompts based on danbooru tags. <Prompt Start> "
@@ -491,16 +726,19 @@ def main(args):
     else:
         resume_step = 0
 
-    # Setup data:
+    # ---------------------- MODIFIED: Support multiple resolutions ----------------------
+    # Add a new argument (see below in the parser) for comma-separated training resolutions.
+    # For each resolution, try to get resolution-specific global and micro batch sizes
+    # (if not provided, fall back to default values).
+    train_resolutions = [int(x.strip()) for x in args.train_resolutions.split(",")]
     data_collection = {}
-    for train_res in [1024]:
+    for train_res in train_resolutions:
         logger.info(f"Creating data for resolution {train_res}")
 
-        global_bsz = getattr(args, f"global_bsz_{train_res}")
+        global_bsz = args.__dict__.get(f"global_bsz_{train_res}", args.global_bsz_default)
         local_bsz = global_bsz // dp_world_size
-        micro_bsz = getattr(args, f"micro_bsz_{train_res}")
+        micro_bsz = args.__dict__.get(f"micro_bsz_{train_res}", args.micro_bsz_default)
         assert global_bsz % dp_world_size == 0, "Batch size must be divisible by data parallel world size."
-        logger.info(f"Global bsz: {global_bsz} Local bsz: {local_bsz} Micro bsz: {micro_bsz}")
 
         patch_size = 8 * model_patch_size
         logger.info(f"patch size: {patch_size}")
@@ -535,6 +773,7 @@ def main(args):
             resume_step,
             args.global_seed + train_res * 100,
         )
+        logger.info(f"Sampler ready, loading DataLoader...")
         loader = DataLoader(
             dataset,
             batch_size=local_bsz,
@@ -564,6 +803,7 @@ def main(args):
             "metrics": defaultdict(lambda: SmoothedValue(args.log_every)),
             "transport": transport,
         }
+    # ------------------------------------------------------------------------------------
 
     # Prepare models for training:
     model.train()
@@ -824,8 +1064,17 @@ if __name__ == "__main__":
     parser.add_argument("--results_dir", type=str, required=True)
     parser.add_argument("--model", type=str, default="DiT_Llama2_7B_patch2")
     parser.add_argument("--max_steps", type=int, default=100_000, help="Number of training steps.")
+    # Define default batch sizes for resolution 1024 (if you do not provide resolution-specific values, these are used)
     parser.add_argument("--global_bsz_1024", type=int, default=256)
     parser.add_argument("--micro_bsz_1024", type=int, default=1)
+    for res in [4096, 2048, 1536, 768, 512, 384]:
+        parser.add_argument(f"--global_bsz_{res}", type=int, default=256)
+        parser.add_argument(f"--micro_bsz_{res}", type=int, default=1)
+    # Add new default batch size arguments (to be used if resolution-specific ones are not provided)
+    parser.add_argument("--global_bsz_default", type=int, default=256, help="Default global batch size for training resolutions if not specified")
+    parser.add_argument("--micro_bsz_default", type=int, default=1, help="Default micro batch size for training resolutions if not specified")
+    # Add an argument for comma-separated list of training resolutions
+    parser.add_argument("--train_resolutions", type=str, default="1024", help="Comma separated list of training resolutions to support. E.g.: '384,512,768,1024,1536,2048,4096'")
     parser.add_argument("--global_seed", type=int, default=0)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--log_every", type=int, default=100)
