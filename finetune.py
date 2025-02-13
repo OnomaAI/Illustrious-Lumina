@@ -45,9 +45,8 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 from transformers import AutoModel, AutoTokenizer
-
+import bitsandbytes as bnb
 import wandb  # <--- (1) Import wandb
-
 from data import DataNoReportException, ItemProcessor, MyDataset, read_general
 from imgproc import generate_crop_size_list, to_rgb_if_rgba, var_center_crop
 import models
@@ -697,8 +696,25 @@ def main(args):
     )
 
     logger.info("AdamW eps 1e-15 betas (0.9, 0.95)")
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd, eps=1e-15, betas=(0.9, 0.95))
-    if args.resume:
+    if args.use_8bit_adam:
+        opt = bnb.optim.AdamW8bit(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=args.wd,
+            betas=tuple(args.betas),
+            eps=args.eps,
+            optim_bits=8
+        )
+        print("[INFO] Using 8-bit AdamW optimizer (bitsandbytes).")
+    else:
+        opt = torch.optim.AdamW(
+            model.parameters(),
+            lr=args.lr,
+            weight_decay=args.wd,
+            betas=tuple(args.betas),
+            eps=args.eps,
+        )
+    if not args.skip_optimizer_load and args.resume:
         opt_state_world_size = len(
             [x for x in os.listdir(args.resume) if x.startswith("optimizer.") and x.endswith(".pth")]
         )
@@ -720,11 +736,15 @@ def main(args):
         for param_group in opt.param_groups:
             param_group["lr"] = args.lr
             param_group["weight_decay"] = args.wd
-
         with open(os.path.join(args.resume, "resume_step.txt")) as f:
             resume_step = int(f.read().strip())
     else:
-        resume_step = 0
+        if not args.resume:
+            resume_step = 0
+        else:
+            with open(os.path.join(args.resume, "resume_step.txt")) as f:
+                resume_step = int(f.read().strip())
+
 
     # ---------------------- MODIFIED: Support multiple resolutions ----------------------
     # Add a new argument (see below in the parser) for comma-separated training resolutions.
@@ -1084,6 +1104,8 @@ if __name__ == "__main__":
     parser.add_argument("--data_parallel", type=str, choices=["sdp", "fsdp"], default="fsdp")
     parser.add_argument("--checkpointing", action="store_true")
     parser.add_argument("--precision", choices=["fp32", "tf32", "fp16", "bf16"], default="bf16")
+    parser.add_argument("--use_8bit_adam", action="store_true", 
+                        help="Use 8-bit AdamW optimizer from bitsandbytes.")
     parser.add_argument("--grad_precision", choices=["fp32", "fp16", "bf16"])
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
     parser.add_argument(
@@ -1091,6 +1113,11 @@ if __name__ == "__main__":
         action="store_false",
         dest="auto_resume",
         help="Do NOT auto resume from the last checkpoint in --results_dir.",
+    )
+    parser.add_argument(
+        "--use_xformers", 
+        action="store_true", 
+        help="Enable memory-efficient attention via xFormers"
     )
     parser.add_argument("--resume", type=str, help="Resume training from a checkpoint folder.")
     parser.add_argument(
@@ -1110,6 +1137,9 @@ if __name__ == "__main__":
         default=0.0,
         help="Weight decay for the optimizer.",
     )
+    parser.add_argument("--skip_optimizer_load", action="store_true")
+    parser.add_argument("--betas", type=float, nargs=2, default=(0.9, 0.95))
+    parser.add_argument("--eps", type=float, default=1e-8)
     parser.add_argument("--qk_norm", action="store_true")
     parser.add_argument(
         "--caption_dropout_prob",
