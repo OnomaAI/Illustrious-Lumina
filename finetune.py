@@ -299,9 +299,11 @@ class NonRGBError(DataNoReportException):
     pass
 
 class T2IItemProcessor(ItemProcessor):
-    def __init__(self, transform):
+    def __init__(self, transform, use_cached_latents=False, resolution=1024):
         self.image_transform = transform
         self.special_format_set = set()
+        self.use_cached_latents = use_cached_latents
+        self.train_res = resolution
 
     def process_item(self, data_item, training_mode=False):
         if "super_high_quality_caption" in data_item:
@@ -332,6 +334,29 @@ class T2IItemProcessor(ItemProcessor):
             )
         else:
             raise ValueError(f"Unrecognized item: {data_item}")
+        # Check for cached latents if enabled:
+        if self.use_cached_latents:
+            # Suppose the latent file is <image_path_no_ext>_<resolution>.npz
+            # Or define your own naming rule. For example:
+            base, ext = os.path.splitext(url)
+            # You could store a known resolution or multiple. We'll do something simple:
+            # E.g. training might be 1024 by default:
+            res = self.train_res
+            latent_path = f"{base}_{res}.npz"
+
+            if os.path.exists(latent_path):
+                # Load from .npz
+                try:
+                    arr = np.load(latent_path)["latent"]  # shape = (16, H//8, W//8)
+                    # Convert to torch
+                    latent_tensor = torch.from_numpy(arr)
+                    # Return this latent in place of an image
+                    if text is None or text.strip() == "":
+                        text = ""
+                    text = system_prompt + text
+                    return latent_tensor, text
+                except Exception as e:
+                    print(f"[Warning] Could not load {latent_path}, fallback to normal image: {e}")
 
         if image.mode.upper() != "RGB":
             mode = image.mode.upper()
@@ -592,6 +617,7 @@ def main(args):
     )
     logger.info(f"DiT Parameters: {model.parameter_count():,}")
     model_patch_size = model.patch_size
+    print(f"Model patch size: {model_patch_size}")
 
     if args.auto_resume and args.resume is None:
         try:
@@ -777,7 +803,11 @@ def main(args):
         )
         dataset = MyDataset(
             args.data_path,
-            item_processor=T2IItemProcessor(image_transform),
+            item_processor=T2IItemProcessor(
+                transform=image_transform,
+                use_cached_latents=args.use_cached_latents,
+                resolution=train_res
+            ),
             cache_on_disk=args.cache_data_on_disk,
         )
         num_samples = global_bsz * args.max_steps
@@ -858,8 +888,14 @@ def main(args):
                     warnings.warn(f"vae scale: {vae_scale}    vae shift: {vae_shift}")
                 # Map input images to latent space + normalize latents:
                 for i, img in enumerate(x):
-                    x[i] = (vae.encode(img[None].bfloat16()).latent_dist.mode()[0] - vae_shift) * vae_scale
-                    x[i] = x[i].float()
+                    # If x[i] is a 3-channel image => shape=(3,H,W). If x[i] is a 16-channel latent => shape=(16,H',W').
+                    if img.shape[0] == 16:
+                        # This means it's already a latent, skip VAE
+                        pass
+                    else:
+                        # It's an image => run VAE encoding
+                        x[i] = (vae.encode(img[None].bfloat16()).latent_dist.mode()[0] - vae_shift) * vae_scale
+                        x[i] = x[i].float()
 
             with torch.no_grad():
                 cap_feats, cap_mask = encode_prompt(caps, text_encoder, tokenizer, args.caption_dropout_prob)
@@ -1087,7 +1123,7 @@ if __name__ == "__main__":
     # Define default batch sizes for resolution 1024 (if you do not provide resolution-specific values, these are used)
     parser.add_argument("--global_bsz_1024", type=int, default=256)
     parser.add_argument("--micro_bsz_1024", type=int, default=1)
-    for res in [4096, 2048, 1536, 768, 512, 384]:
+    for res in [4096, 2048, 1536, 768, 512, 384, 256]:
         parser.add_argument(f"--global_bsz_{res}", type=int, default=256)
         parser.add_argument(f"--micro_bsz_{res}", type=int, default=1)
     # Add new default batch size arguments (to be used if resolution-specific ones are not provided)
@@ -1113,6 +1149,11 @@ if __name__ == "__main__":
         action="store_false",
         dest="auto_resume",
         help="Do NOT auto resume from the last checkpoint in --results_dir.",
+    )
+    parser.add_argument(
+        "--use_cached_latents",
+        action="store_true",
+        help="If set, the dataset will try to load .npz latents instead of raw images."
     )
     parser.add_argument(
         "--use_xformers", 

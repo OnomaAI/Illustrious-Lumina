@@ -7,3 +7,6 @@ gradio
 torchdiffeq
 click
 h5py
+bitsandbytes
+torchvision
+torch
