@@ -183,6 +183,8 @@ def read_general(path) -> Union[str, BytesIO]:
         # parse out the integer ID from the URI
         parts = path.split("://", 1)
         if len(parts) == 2:
+            if os.path.exists(parts[1]):
+                return parts[1] # did you make mistake here?
             try:
                 danbooru_id = int(parts[1])
             except ValueError:
