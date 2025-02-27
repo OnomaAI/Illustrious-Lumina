@@ -94,11 +94,11 @@ class MyDataset(Dataset):
                 df = pd.read_parquet(meta_path)  # Read the Parquet file into a DataFrame
                 for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Reading {meta_path}"):
                     # Pull the 'index' column (whatever column indicates image index/id)
-                    index_val = row["index"]
+                    index_val = row["index"] if "index" in df.columns else row["id"]
 
                     # For each *other* column in the row, if not None/NaN, use it as "prompt"
                     for col in df.columns:
-                        if col == "index":
+                        if col == "index" or col == "id":
                             continue
                         # Skip if the value is None or NaN
                         if pd.notna(row[col]):
