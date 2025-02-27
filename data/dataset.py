@@ -8,7 +8,8 @@ import random
 from time import sleep
 import traceback
 import warnings
-
+import pandas as pd
+from tqdm import tqdm
 import h5py
 import torch.distributed as dist
 from torch.utils.data import Dataset
@@ -88,10 +89,27 @@ class MyDataset(Dataset):
                         except json.decoder.JSONDecodeError as e:
                             logger.error(f"Error decoding the following jsonl line ({i}):\n{line.rstrip()}")
                             raise e
+            elif meta_ext == ".parquet":
+                meta_l = []
+                df = pd.read_parquet(meta_path)  # Read the Parquet file into a DataFrame
+                for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Reading {meta_path}"):
+                    # Pull the 'index' column (whatever column indicates image index/id)
+                    index_val = row["index"]
+
+                    # For each *other* column in the row, if not None/NaN, use it as "prompt"
+                    for col in df.columns:
+                        if col == "index":
+                            continue
+                        # Skip if the value is None or NaN
+                        if pd.notna(row[col]):
+                            meta_l.append({
+                                "image_path": f"danbooru://{index_val}" if not os.path.exists(row[col]) else row[col],
+                                "prompt": str(row[col])  # Cast to str in case it's not a string
+                            })
             else:
                 raise NotImplementedError(
                     f'Unknown meta file extension: "{meta_ext}". '
-                    f"Currently, .json, .jsonl are supported. "
+                    f"Currently, .json, .jsonl, .parquet (with index column + caption columns) are supported. "
                     "If you are using a supported format, please set the file extension so that the proper parsing "
                     "routine can be called."
                 )
