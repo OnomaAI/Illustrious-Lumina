@@ -515,7 +515,8 @@ def setup_mixed_precision(args):
 def encode_prompt(prompt_batch, text_encoder, tokenizer, proportion_empty_prompts, is_train=True):
     captions = []
     for caption in prompt_batch:
-        if random.random() < proportion_empty_prompts:
+        # check strict terms
+        if not any([check_strict_terms(caption)]) and random.random() < proportion_empty_prompts:
             captions.append("")
         elif isinstance(caption, str):
             captions.append(caption)
