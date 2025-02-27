@@ -53,6 +53,8 @@ import models
 from parallel import distributed_init, get_intra_node_process_group
 from transport import create_transport
 from util.misc import SmoothedValue
+from datetime import timedelta
+dist.init_process_group(backend='nccl', timeout=timedelta(hours=5))
 #############################################################################
 #                           Danbooru prompt processor for safety control                              #
 CONVERTABLE_DICT = {
