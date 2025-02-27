@@ -51,7 +51,7 @@ class MyDataset(Dataset):
         self.cache_on_disk = cache_on_disk
         if self.cache_on_disk:
             cache_dir = self._get_cache_dir(config_path)
-            if dist.get_rank() == 0:
+            if int(os.environ["LOCAL_RANK"]) == 0: # per node
                 self._collect_annotations_and_save_to_cache(cache_dir)
             dist.barrier()
             ann, group_indice_range = self._load_annotations_from_cache(cache_dir)
@@ -101,7 +101,7 @@ class MyDataset(Dataset):
                         if col == "index" or col == "id":
                             continue
                         # Skip if the value is None or NaN
-                        if pd.notna(row[col]):
+                        if pd.notna(row[col]) and str(row[col]):
                             meta_l.append({
                                 "image_path": f"danbooru://{index_val}" if not os.path.exists(row[col]) else row[col],
                                 "prompt": str(row[col])  # Cast to str in case it's not a string
