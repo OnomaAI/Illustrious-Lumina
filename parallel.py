@@ -7,6 +7,7 @@ from time import sleep
 import fairscale.nn.model_parallel.initialize as fs_init
 import torch
 import torch.distributed as dist
+from datetime import timedelta
 
 
 def _setup_dist_env_from_slurm(args):
@@ -48,7 +49,7 @@ def distributed_init(args):
     if any([x not in os.environ for x in ["RANK", "WORLD_SIZE", "MASTER_PORT", "MASTER_ADDR"]]):
         _setup_dist_env_from_slurm(args)
 
-    dist.init_process_group("nccl")
+    dist.init_process_group("nccl", timeout=timedelta(hours=5))
     fs_init.initialize_model_parallel(args.model_parallel_size)
     torch.cuda.set_device(dist.get_rank() % torch.cuda.device_count())
 
