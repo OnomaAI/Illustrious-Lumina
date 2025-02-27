@@ -10,3 +10,4 @@ h5py
 bitsandbytes
 torchvision
 torch
+fastparquet
