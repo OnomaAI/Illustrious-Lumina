@@ -4,7 +4,7 @@ import requests
 import logging
 import time
 from io import BytesIO
-from typing import Union
+from typing import Union, Optional, Tuple, Dict
 
 from PIL import Image
 
@@ -32,7 +32,7 @@ def primary_subfolder_from_id(x: int) -> str:
 
 def secondary_chunk_from_id(x: int, chunk_size=1000) -> int:
     """ Returns the chunk index for the fallback dataset. """
-    return x // chunk_size
+    return x % chunk_size
 
 def download_range(session: requests.Session, url: str, start: int, end: int) -> bytes:
     """
@@ -94,23 +94,38 @@ def load_secondary_json_index(session: requests.Session, chunk_index: int) -> di
         data = json.load(f)
     return data
 
-def find_in_primary(session: requests.Session, x: int):
-    """
-    Tries to find offsets for ID=x in the primary dataset.
-    Returns (tar_url, start_offset, end_offset, filename) or None if not found.
-    """
-    folder_name = primary_subfolder_from_id(x)
-    json_index = load_primary_json_index(session, folder_name)
+def load_json_index(session: requests.Session, url: str, cache_path: str) -> Optional[Dict]:
+    if not os.path.isfile(cache_path):
+        response = session.get(url)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        with open(cache_path, "wb") as f:
+            f.write(response.content)
+
+    with open(cache_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def build_primary_id_map(json_index: Dict[str, Tuple[int, int]]) -> Dict[int, str]:
+    return {int(os.path.splitext(filename)[0]): filename for filename in json_index.keys()}
+
+def find_in_primary(session: requests.Session, image_id: int) -> Optional[Tuple[str, int, int, str]]:
+    folder = primary_subfolder_from_id(image_id)
+    json_url = f"{PRIMARY_BASE_URL}/{folder}.json"
+    local_path = os.path.join(PRIMARY_CACHE_DIR, f"{folder}.json")
+
+    json_index = load_json_index(session, json_url, local_path)
     if json_index is None:
         return None
 
-    filename = f"{x}.jpg"
-    if filename not in json_index:
+    id_map = build_primary_id_map(json_index)
+    filename = id_map.get(image_id)
+    if not filename:
         return None
 
     start_offset, end_offset = json_index[filename]
-    tar_url = f"{PRIMARY_BASE_URL}/{folder_name}.tar"
-    return (tar_url, start_offset, end_offset, filename)
+    tar_url = f"{PRIMARY_BASE_URL}/{folder}.tar"
+    return tar_url, start_offset, end_offset, filename
 
 def find_in_secondary(session: requests.Session, x: int):
     """
