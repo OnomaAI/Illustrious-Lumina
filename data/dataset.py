@@ -14,7 +14,7 @@ import h5py
 import torch.distributed as dist
 from torch.utils.data import Dataset
 import yaml
-
+from datasets import load_dataset
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +38,91 @@ class ItemProcessor(ABC):
     @abstractmethod
     def process_item(self, data_item, training_mode=False):
         raise NotImplementedError
+def is_huggingface_path(path: str) -> bool:
+    return "/" in path and not os.path.exists(path) and not "booru" in path
 
+class ImageTextDataset(Dataset):
+    """General dataset class that handles both local and Hugging Face image-text data."""
+    def __init__(self, path: str, subset: str = None, cache_latents: bool = False, transform=None):
+        self.transform = transform
+        self.cache_latents = cache_latents
+        self.latents = None
+
+        if is_huggingface_path(path):
+            # Load from Hugging Face Hub
+            dataset_name = path
+            # If subset is specified in YAML, use it; otherwise, default to None or a default config
+            ds = load_dataset(dataset_name, subset, split="train", streaming=True)
+            # Rename fields for consistency
+            if "annotation" in ds.column_names:
+                ds = ds.rename_column("annotation", "prompt")
+            # (Optionally handle other field name mappings if needed)
+            self.data = ds    # a datasets.Dataset object
+        else:
+            # Load from local JSON or folder (existing mechanism)
+            # e.g., load json lines with keys "image_path" and "prompt"
+            self.data = load_local_imagetext_data(path)  # pseudo-function to load local data
+
+        # If caching latents is requested, pre-compute them
+        if cache_latents:
+            self._compute_and_cache_latents()
+    
+    def __len__(self):
+        # HuggingFace Dataset acts like a sequence (len available if not streaming)
+        return len(self.data)
+    
+    def process_text_caption(self, caption):
+        if "text:" in caption:
+            pre_caption, post_caption = caption.split("text:")
+            caption = pre_caption + "text: \"" + post_caption + "\""
+        return caption
+    
+    def __getitem__(self, idx):
+        sample = self.data[idx]
+        # If using HuggingFace dataset, sample is a dict; if local, design it to be dict for consistency.
+        image = None
+        caption = None
+        if isinstance(sample, dict):
+            # For HuggingFace or JSON data
+            if "image" in sample:
+                # HuggingFace dataset with decoded image
+                image = sample["image"]
+            elif "image_path" in sample:
+                # Local data case: use read_general to open the image
+                image_path = sample["image_path"]
+                image = Image.open(read_general(image_path))
+            # Get caption text (support different possible key names)
+            caption = sample.get("prompt") or sample.get("caption") or sample.get("text")
+            caption = self.process_text_caption(caption)
+        else:
+            # If self.data was a list of tuples or custom format, handle accordingly.
+            image_path, caption = sample  # example for tuple format
+            caption = self.process_text_caption(caption)
+            image = Image.open(read_general(image_path))
+        
+        if self.transform:
+            image = self.transform(image)
+        # If latents are cached, return latent instead of image
+        if self.latents is not None:
+            latent = self.latents[idx]
+            return {"image_latent": latent, "prompt": caption}
+        else:
+            return {"image": image, "prompt": caption}
+
+    def _compute_and_cache_latents(self):
+        """Pre-compute latents for all images in the dataset using the VAE, to accelerate training."""
+        vae = load_pretrained_vae()  # pseudo-function to load the VAE model
+        self.latents = []
+        for i in range(len(self.data)):
+            # Obtain image (either from memory or by loading from path)
+            img = None
+            if isinstance(self.data[i], dict) and "image" in self.data[i]:
+                img = self.data[i]["image"]
+            else:
+                path = self.data[i]["image_path"] if isinstance(self.data[i], dict) else self.data[i][0]
+                img = Image.open(read_general(path))
+            latent = vae.encode(img)  # pseudo-code: get latent from VAE
+            self.latents.append(latent)
 
 class MyDataset(Dataset):
     def __init__(self, config_path, item_processor: ItemProcessor, cache_on_disk=False):
@@ -51,7 +135,7 @@ class MyDataset(Dataset):
         self.cache_on_disk = cache_on_disk
         if self.cache_on_disk:
             cache_dir = self._get_cache_dir(config_path)
-            if int(os.environ["LOCAL_RANK"]) == 0: # per node
+            if dist.get_rank() == 0:
                 self._collect_annotations_and_save_to_cache(cache_dir)
             dist.barrier()
             ann, group_indice_range = self._load_annotations_from_cache(cache_dir)
@@ -94,11 +178,11 @@ class MyDataset(Dataset):
                 df = pd.read_parquet(meta_path)  # Read the Parquet file into a DataFrame
                 for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Reading {meta_path}"):
                     # Pull the 'index' column (whatever column indicates image index/id)
-                    index_val = row["index"] if "index" in df.columns else row["id"]
+                    index_val = row["index"]
 
                     # For each *other* column in the row, if not None/NaN, use it as "prompt"
                     for col in df.columns:
-                        if col == "index" or col == "id":
+                        if col == "index":
                             continue
                         # Skip if the value is None or NaN
                         if pd.notna(row[col]) and str(row[col]):
