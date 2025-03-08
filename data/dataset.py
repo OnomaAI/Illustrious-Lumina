@@ -39,6 +39,8 @@ class ItemProcessor(ABC):
     def process_item(self, data_item, training_mode=False):
         raise NotImplementedError
 def is_huggingface_path(path: str) -> bool:
+    # Heuristic: Hugging Face dataset paths are in format "user/dataset"
+    # and not an existing local file or directory.
     return "/" in path and not os.path.exists(path) and not "booru" in path
 
 class ImageTextDataset(Dataset):
@@ -52,7 +54,7 @@ class ImageTextDataset(Dataset):
             # Load from Hugging Face Hub
             dataset_name = path
             # If subset is specified in YAML, use it; otherwise, default to None or a default config
-            ds = load_dataset(dataset_name, subset, split="train", streaming=True)
+            ds = load_dataset(dataset_name, subset, split="train", streaming=False)
             # Rename fields for consistency
             if "annotation" in ds.column_names:
                 ds = ds.rename_column("annotation", "prompt")
@@ -187,7 +189,7 @@ class MyDataset(Dataset):
                         # Skip if the value is None or NaN
                         if pd.notna(row[col]) and str(row[col]):
                             meta_l.append({
-                                "image_path": f"danbooru://{index_val}" if not os.path.exists(row[col]) else row[col],
+                                "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) else index_val,
                                 "prompt": str(row[col])  # Cast to str in case it's not a string
                             })
             else:
