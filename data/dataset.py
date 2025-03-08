@@ -14,7 +14,6 @@ import h5py
 import torch.distributed as dist
 from torch.utils.data import Dataset
 import yaml
-from datasets import load_dataset
 logger = logging.getLogger(__name__)
 
 
@@ -41,91 +40,7 @@ class ItemProcessor(ABC):
 def is_huggingface_path(path: str) -> bool:
     # Heuristic: Hugging Face dataset paths are in format "user/dataset"
     # and not an existing local file or directory.
-    return "/" in path and not os.path.exists(path) and not "booru" in path
-
-class ImageTextDataset(Dataset):
-    """General dataset class that handles both local and Hugging Face image-text data."""
-    def __init__(self, path: str, subset: str = None, cache_latents: bool = False, transform=None):
-        self.transform = transform
-        self.cache_latents = cache_latents
-        self.latents = None
-
-        if is_huggingface_path(path):
-            # Load from Hugging Face Hub
-            dataset_name = path
-            # If subset is specified in YAML, use it; otherwise, default to None or a default config
-            ds = load_dataset(dataset_name, subset, split="train", streaming=False)
-            # Rename fields for consistency
-            if "annotation" in ds.column_names:
-                ds = ds.rename_column("annotation", "prompt")
-            # (Optionally handle other field name mappings if needed)
-            self.data = ds    # a datasets.Dataset object
-        else:
-            # Load from local JSON or folder (existing mechanism)
-            # e.g., load json lines with keys "image_path" and "prompt"
-            self.data = load_local_imagetext_data(path)  # pseudo-function to load local data
-
-        # If caching latents is requested, pre-compute them
-        if cache_latents:
-            self._compute_and_cache_latents()
-    
-    def __len__(self):
-        # HuggingFace Dataset acts like a sequence (len available if not streaming)
-        return len(self.data)
-    
-    def process_text_caption(self, caption):
-        if "text:" in caption:
-            pre_caption, post_caption = caption.split("text:")
-            caption = pre_caption + "text: \"" + post_caption + "\""
-        return caption
-    
-    def __getitem__(self, idx):
-        sample = self.data[idx]
-        # If using HuggingFace dataset, sample is a dict; if local, design it to be dict for consistency.
-        image = None
-        caption = None
-        if isinstance(sample, dict):
-            # For HuggingFace or JSON data
-            if "image" in sample:
-                # HuggingFace dataset with decoded image
-                image = sample["image"]
-            elif "image_path" in sample:
-                # Local data case: use read_general to open the image
-                image_path = sample["image_path"]
-                image = Image.open(read_general(image_path))
-            # Get caption text (support different possible key names)
-            caption = sample.get("prompt") or sample.get("caption") or sample.get("text")
-            caption = self.process_text_caption(caption)
-        else:
-            # If self.data was a list of tuples or custom format, handle accordingly.
-            image_path, caption = sample  # example for tuple format
-            caption = self.process_text_caption(caption)
-            image = Image.open(read_general(image_path))
-        
-        if self.transform:
-            image = self.transform(image)
-        # If latents are cached, return latent instead of image
-        if self.latents is not None:
-            latent = self.latents[idx]
-            return {"image_latent": latent, "prompt": caption}
-        else:
-            return {"image": image, "prompt": caption}
-
-    def _compute_and_cache_latents(self):
-        """Pre-compute latents for all images in the dataset using the VAE, to accelerate training."""
-        vae = load_pretrained_vae()  # pseudo-function to load the VAE model
-        self.latents = []
-        for i in range(len(self.data)):
-            # Obtain image (either from memory or by loading from path)
-            img = None
-            if isinstance(self.data[i], dict) and "image" in self.data[i]:
-                img = self.data[i]["image"]
-            else:
-                path = self.data[i]["image_path"] if isinstance(self.data[i], dict) else self.data[i][0]
-                img = Image.open(read_general(path))
-            latent = vae.encode(img)  # pseudo-code: get latent from VAE
-            self.latents.append(latent)
-
+    return ("/" in path and not os.path.exists(path) and not "booru" in path) or os.path.exists(path) and os.path.isdir(path)
 class MyDataset(Dataset):
     def __init__(self, config_path, item_processor: ItemProcessor, cache_on_disk=False):
         logger.info(f"read dataset config from {config_path}")
@@ -159,46 +74,49 @@ class MyDataset(Dataset):
         group_ann = {}
         for meta in self.config["META"]:
             meta_path, meta_type = meta["path"], meta.get("type", "default")
-            meta_ext = os.path.splitext(meta_path)[-1]
-            if meta_ext == ".json":
-                # with open(meta_path) as f:
-                #     meta_l = json.load(f)
-                with open(meta_path, 'r') as json_file:
-                    f = json_file.read()
-                    meta_l = json.loads(f) 
-            elif meta_ext == ".jsonl":
-                meta_l = []
-                with open(meta_path) as f:
-                    for i, line in enumerate(f):
-                        try:
-                            meta_l.append(json.loads(line))
-                        except json.decoder.JSONDecodeError as e:
-                            logger.error(f"Error decoding the following jsonl line ({i}):\n{line.rstrip()}")
-                            raise e
-            elif meta_ext == ".parquet":
-                meta_l = []
-                df = pd.read_parquet(meta_path)  # Read the Parquet file into a DataFrame
-                for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Reading {meta_path}"):
-                    # Pull the 'index' column (whatever column indicates image index/id)
-                    index_val = row["index"]
-
-                    # For each *other* column in the row, if not None/NaN, use it as "prompt"
-                    for col in df.columns:
-                        if col == "index":
-                            continue
-                        # Skip if the value is None or NaN
-                        if pd.notna(row[col]) and str(row[col]):
-                            meta_l.append({
-                                "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) else index_val,
-                                "prompt": str(row[col])  # Cast to str in case it's not a string
-                            })
+            if is_huggingface_path(meta_path):
+                dataset = load_dataset(meta_path, split="train", streaming=False)
             else:
-                raise NotImplementedError(
-                    f'Unknown meta file extension: "{meta_ext}". '
-                    f"Currently, .json, .jsonl, .parquet (with index column + caption columns) are supported. "
-                    "If you are using a supported format, please set the file extension so that the proper parsing "
-                    "routine can be called."
-                )
+                meta_ext = os.path.splitext(meta_path)[-1]
+                if meta_ext == ".json":
+                    # with open(meta_path) as f:
+                    #     meta_l = json.load(f)
+                    with open(meta_path, 'r') as json_file:
+                        f = json_file.read()
+                        meta_l = json.loads(f) 
+                elif meta_ext == ".jsonl":
+                    meta_l = []
+                    with open(meta_path) as f:
+                        for i, line in enumerate(f):
+                            try:
+                                meta_l.append(json.loads(line))
+                            except json.decoder.JSONDecodeError as e:
+                                logger.error(f"Error decoding the following jsonl line ({i}):\n{line.rstrip()}")
+                                raise e
+                elif meta_ext == ".parquet":
+                    meta_l = []
+                    df = pd.read_parquet(meta_path)  # Read the Parquet file into a DataFrame
+                    for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Reading {meta_path}"):
+                        # Pull the 'index' column (whatever column indicates image index/id)
+                        index_val = row["index"]
+
+                        # For each *other* column in the row, if not None/NaN, use it as "prompt"
+                        for col in df.columns:
+                            if col == "index":
+                                continue
+                            # Skip if the value is None or NaN
+                            if pd.notna(row[col]) and str(row[col]):
+                                meta_l.append({
+                                    "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) else index_val,
+                                    "prompt": str(row[col])  # Cast to str in case it's not a string
+                                })
+                else:
+                    raise NotImplementedError(
+                        f'Unknown meta file extension: "{meta_ext}". '
+                        f"Currently, .json, .jsonl, .parquet (with index column + caption columns) are supported. "
+                        "If you are using a supported format, please set the file extension so that the proper parsing "
+                        "routine can be called."
+                    )
             logger.info(f"{meta_path}, type{meta_type}: len {len(meta_l)}")
             if "ratio" in meta:
                 random.seed(0)
