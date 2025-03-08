@@ -53,6 +53,8 @@ class MyDataset(Dataset):
         if self.cache_on_disk:
             cache_dir = self._get_cache_dir(config_path)
             if int(os.environ["LOCAL_RANK"]) == 0:
+                local_rank = dist.get_rank()
+                print(f"Building cache on rank {local_rank}")
                 self._collect_annotations_and_save_to_cache(cache_dir)
             dist.barrier()
             ann, group_indice_range = self._load_annotations_from_cache(cache_dir)
@@ -87,7 +89,7 @@ class MyDataset(Dataset):
                 elif meta_ext == ".jsonl":
                     meta_l = []
                     with open(meta_path) as f:
-                        for i, line in enumerate(f):
+                        for i, line in tqdm(enumerate(f), desc=f"Reading {meta_path}"):
                             try:
                                 meta_l.append(json.loads(line))
                             except json.decoder.JSONDecodeError as e:
