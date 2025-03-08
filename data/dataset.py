@@ -52,7 +52,7 @@ class MyDataset(Dataset):
         self.cache_on_disk = cache_on_disk
         if self.cache_on_disk:
             cache_dir = self._get_cache_dir(config_path)
-            if dist.get_rank() == 0:
+            if int(os.environ["LOCAL_RANK"]) == 0:
                 self._collect_annotations_and_save_to_cache(cache_dir)
             dist.barrier()
             ann, group_indice_range = self._load_annotations_from_cache(cache_dir)
@@ -180,7 +180,7 @@ class MyDataset(Dataset):
     def _load_annotations_from_cache(cache_dir):
         while not (Path(cache_dir) / "ready").exists():
             # cache has not yet been completed by rank 0
-            assert dist.get_rank() != 0
+            assert int(os.environ["LOCAL_RANK"]) != 0
             sleep(1)
         cache_file = h5py.File(Path(cache_dir) / "data.h5", "r")
         annotations = cache_file["ann"]
