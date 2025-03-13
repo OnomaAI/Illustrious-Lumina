@@ -73,9 +73,19 @@ class MyDataset(Dataset):
         return len(self.ann)
 
     def _collect_annotations(self):
+        meta_type_to_caption_type = {
+            "image_text" : "prompt",
+            "image_nl_caption" : "sentence",
+            "image_alttext" : "alttext",
+            "default" : "prompt",
+            "super_high_quality_caption" : "super_high_quality_caption",
+            "image_tags" : "tags",
+        }
+        switchable_keys = ["prompt", "sentence", "alttext", "super_high_quality_caption", "tags"]
         group_ann = {}
         for meta in self.config["META"]:
             meta_path, meta_type = meta["path"], meta.get("type", "default")
+            meta_key = meta_type_to_caption_type.get(meta_type, "prompt")
             if is_huggingface_path(meta_path):
                 dataset = load_dataset(meta_path, split="train", streaming=False)
             else:
@@ -91,13 +101,31 @@ class MyDataset(Dataset):
                     with open(meta_path) as f:
                         for i, line in tqdm(enumerate(f), desc=f"Reading {meta_path}"):
                             try:
-                                meta_l.append(json.loads(line))
+                                read_result = json.loads(line)
+                                if isinstance(read_result, dict):
+                                    for key in switchable_keys:
+                                        if key in read_result:
+                                            read_result[meta_key] = read_result[key]
+                                            read_result.pop(key)
+                                    meta_l.append(read_result)
+                                else:
+                                    raise ValueError(f"Expected a dictionary, got {type(read_result)} for {meta_path} line {i}")
                             except json.decoder.JSONDecodeError as e:
                                 logger.error(f"Error decoding the following jsonl line ({i}):\n{line.rstrip()}")
                                 raise e
                 elif meta_ext == ".parquet":
                     meta_l = []
                     df = pd.read_parquet(meta_path)  # Read the Parquet file into a DataFrame
+                    pq_cols = meta.get("pq_cols", None)
+                    if pq_cols is not None:
+                        cols = pq_cols.split(",")
+                    else:
+                        cols = None
+                    if cols:
+                        if "index" not in cols:
+                            raise ValueError(f"The 'index' column must be included in the 'pq_cols' list., in {meta_path}")
+                        if not all([col in df.columns for col in cols]):
+                            raise ValueError(f"Columns in 'pq_cols' must be present in the Parquet file., in {meta_path}")
                     for _, row in tqdm(df.iterrows(), total=len(df), desc=f"Reading {meta_path}"):
                         # Pull the 'index' column (whatever column indicates image index/id)
                         index_val = row["index"]
@@ -106,11 +134,14 @@ class MyDataset(Dataset):
                         for col in df.columns:
                             if col == "index":
                                 continue
+                            if cols:
+                                if col not in cols:
+                                    continue
                             # Skip if the value is None or NaN
                             if pd.notna(row[col]) and str(row[col]):
                                 meta_l.append({
                                     "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) else index_val,
-                                    "prompt": str(row[col])  # Cast to str in case it's not a string
+                                    meta_key: str(row[col])  # Cast to str in case it's not a string
                                 })
                 else:
                     raise NotImplementedError(
