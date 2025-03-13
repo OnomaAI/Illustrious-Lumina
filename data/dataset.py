@@ -41,6 +41,13 @@ def is_huggingface_path(path: str) -> bool:
     # Heuristic: Hugging Face dataset paths are in format "user/dataset"
     # and not an existing local file or directory.
     return ("/" in path and not os.path.exists(path) and not "booru" in path) or os.path.exists(path) and os.path.isdir(path)
+
+global_log_count = 0
+def log_every_n(n, msg):
+    global global_log_count
+    if global_log_count % n == 0:
+        logger.warning(msg)
+    global_log_count += 1
 class MyDataset(Dataset):
     def __init__(self, config_path, item_processor: ItemProcessor, cache_on_disk=False):
         logger.info(f"read dataset config from {config_path}")
@@ -86,6 +93,7 @@ class MyDataset(Dataset):
         for meta in self.config["META"]:
             meta_path, meta_type = meta["path"], meta.get("type", "default")
             meta_key = meta_type_to_caption_type.get(meta_type, "prompt")
+            logger.info(f"Reading {meta_path} with type {meta_type} and key {meta_key}")
             if is_huggingface_path(meta_path):
                 dataset = load_dataset(meta_path, split="train", streaming=False)
             else:
@@ -104,10 +112,15 @@ class MyDataset(Dataset):
                                 read_result = json.loads(line)
                                 if isinstance(read_result, dict):
                                     for key in switchable_keys:
-                                        if key in read_result:
+                                        if key in read_result and meta_key != key:
                                             read_result[meta_key] = read_result[key]
                                             read_result.pop(key)
-                                    meta_l.append(read_result)
+                                            break
+                                    if read_result[meta_key].strip():
+                                        meta_l.append(read_result)
+                                    else:
+                                        logger.error(f"Empty prompt in {meta_path} line {i}, file: {meta_path}")
+                                    log_every_n(10000, f"line {i}: {read_result}")
                                 else:
                                     raise ValueError(f"Expected a dictionary, got {type(read_result)} for {meta_path} line {i}")
                             except json.decoder.JSONDecodeError as e:
@@ -139,6 +152,7 @@ class MyDataset(Dataset):
                                     continue
                             # Skip if the value is None or NaN
                             if pd.notna(row[col]) and str(row[col]):
+                                log_every_n(10000, f"{meta_key}: {row[col]}")
                                 meta_l.append({
                                     "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) else index_val,
                                     meta_key: str(row[col])  # Cast to str in case it's not a string
