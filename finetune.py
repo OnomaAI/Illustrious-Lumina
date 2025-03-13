@@ -320,18 +320,39 @@ class T2IItemProcessor(ItemProcessor):
             image = Image.open(read_general(url))
             text = data_item["prompt"]
             system_prompt = (
-                "You are an assistant designed to generate high-quality images "
+                "You are an assistant designed to generate images "
                 "based on user prompts. <Prompt Start> "
             )
         elif "image_path" in data_item:
             url = data_item["image_path"]
             image = Image.open(read_general(url))
-            text = data_item["prompt"]
-            text = dropout_tags(text)
-            system_prompt = (
-                "You are an assistant designed to generate high-quality images "
-                "based on user prompts based on danbooru tags. <Prompt Start> "
-            )
+            if "prompt" in data_item:
+                text = data_item["prompt"]
+                text = dropout_tags(text)
+                system_prompt = (
+                    "You are an assistant designed to generate images "
+                    "based on user prompts. <Prompt Start> "
+                )
+            elif "sentence" in data_item:
+                text = data_item["sentence"]
+                system_prompt = (
+                    "You are an assistant designed to generate images "
+                    "based on user prompts. <Prompt Start> "
+                )
+            elif "alttext" in data_item:
+                text = data_item["alttext"]
+                system_prompt = (
+                    "You are an assistant designed to generate images "
+                    "based on alttext information. <Prompt Start> "
+                )
+            elif "tags" in data_item:
+                text = data_item["tags"]
+                system_prompt = (
+                    "You are an assistant designed to generate images "
+                    "based on danbooru tags. <Prompt Start> "
+                )
+            else:
+                raise ValueError(f"Unrecognized item: {data_item}")
         else:
             raise ValueError(f"Unrecognized item: {data_item}")
         # Check for cached latents if enabled:
