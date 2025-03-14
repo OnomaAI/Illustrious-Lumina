@@ -267,7 +267,7 @@ def download_danbooru_id(x: int, repositories: list[Repository]) -> BytesIO:
 # Unified read function
 ########################
 
-def read_general(path: str, repositories: list[Repository]) -> Union[str, BytesIO]:
+def read_general(path: str) -> Union[str, BytesIO]:
     """
     Unified read function:
       - if path.startswith("danbooru://"), parse the ID, attempt partial download from
@@ -303,7 +303,18 @@ def read_general(path: str, repositories: list[Repository]) -> Union[str, BytesI
         # Just return a normal path string if it's not a special scheme
         return path
 
+primary_repo = PrimaryRepository(
+    base_url="https://huggingface.co/datasets/AngelBottomless/Danbooru2025-test/resolve/main",
+    cache_dir="./cache_json_primary",
+)
 
+secondary_repo = SecondaryRepository(
+    tar_base_url="https://huggingface.co/datasets/KBlueLeaf/danbooru2023-webp-4Mpixel/resolve/main/images",
+    json_base_url="https://huggingface.co/datasets/deepghs/danbooru2023-webp-4Mpixel_index/resolve/main/images",
+    cache_dir="./cache_json_secondary",
+)
+
+repositories = [primary_repo, secondary_repo]
 ########################
 # Example usage
 ########################
@@ -311,18 +322,7 @@ def read_general(path: str, repositories: list[Repository]) -> Union[str, BytesI
 if __name__ == "__main__":
     # Build a fallback chain of repositories.
     # You can have as many as you want, in the order you want.
-    primary_repo = PrimaryRepository(
-        base_url="https://huggingface.co/datasets/AngelBottomless/Danbooru2025-test/resolve/main",
-        cache_dir="./cache_json_primary",
-    )
 
-    secondary_repo = SecondaryRepository(
-        tar_base_url="https://huggingface.co/datasets/KBlueLeaf/danbooru2023-webp-4Mpixel/resolve/main/images",
-        json_base_url="https://huggingface.co/datasets/deepghs/danbooru2023-webp-4Mpixel_index/resolve/main/images",
-        cache_dir="./cache_json_secondary",
-    )
-
-    repositories = [primary_repo, secondary_repo]
 
     # Example: read from "danbooru://7502245"
     path = "danbooru://7502245"
