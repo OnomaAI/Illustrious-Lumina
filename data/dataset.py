@@ -40,7 +40,7 @@ class ItemProcessor(ABC):
 def is_huggingface_path(path: str) -> bool:
     # Heuristic: Hugging Face dataset paths are in format "user/dataset"
     # and not an existing local file or directory.
-    return ("/" in path and not os.path.exists(path) and not "booru" in path) or os.path.exists(path) and os.path.isdir(path)
+    return ("/" in path and not os.path.exists(path) and not "booru" in path) or (os.path.exists(path) and os.path.isdir(path))
 
 global_log_count = 0
 def log_every_n(n, msg):
@@ -95,7 +95,7 @@ class MyDataset(Dataset):
             meta_key = meta_type_to_caption_type.get(meta_type, "prompt")
             logger.info(f"Reading {meta_path} with type {meta_type} and key {meta_key}")
             if is_huggingface_path(meta_path):
-                dataset = load_dataset(meta_path, split="train", streaming=False)
+                raise NotImplementedError("Hugging Face datasets are not supported in this minimal example.")
             else:
                 meta_ext = os.path.splitext(meta_path)[-1]
                 if meta_ext == ".json":
