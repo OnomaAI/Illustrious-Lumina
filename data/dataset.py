@@ -154,7 +154,7 @@ class MyDataset(Dataset):
                             if pd.notna(row[col]) and str(row[col]):
                                 log_every_n(10000, f"{meta_key}: {row[col]}")
                                 meta_l.append({
-                                    "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) and "://" not in index_val else index_val,
+                                    "image_path": f"danbooru://{index_val}" if not os.path.exists(index_val) and "://" not in str(index_val) else str(index_val),
                                     meta_key: str(row[col])  # Cast to str in case it's not a string
                                 })
                 else:
