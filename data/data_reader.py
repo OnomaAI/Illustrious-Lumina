@@ -56,7 +56,7 @@ def _get_hf_access_token() -> str:
             hf_access_token = env_data.get("HF_ACCESS_TOKEN")
 
     if not hf_access_token:
-        raise ValueError("HF_ACCESS_TOKEN is not defined in environment or env.json.")
+        return None
 
     return hf_access_token
 
@@ -67,7 +67,8 @@ def get_hf_session() -> requests.Session:
     """
     token = _get_hf_access_token()
     session = requests.Session()
-    session.headers.update({"Authorization": f"Bearer {token}"})
+    if token:
+        session.headers.update({"Authorization": f"Bearer {token}"})
     return session
 
 
@@ -296,7 +297,7 @@ class PrimaryRepository(BaseRepository):
 
         start_offset, end_offset = json_index[filename]
         tar_url = f"{self.base_url}/{folder}.tar"
-        logger.info(
+        logger.debug(
             f"Found image {image_id} in {folder}.tar ({start_offset}-{end_offset})"
         )
         return tar_url, start_offset, end_offset, filename
@@ -681,7 +682,7 @@ class BaseRepositoryPool(RepositoryPool):
             return None
         tar_url, start_offset, end_offset, _ = info
         file_bytes = download_range(session, tar_url, start_offset, end_offset)
-        logger.info(f"Successfully downloaded image {image_id} from {tar_url}")
+        logger.debug(f"Successfully downloaded image {image_id} from {tar_url}")
         return BytesIO(file_bytes)
 
 
