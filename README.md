@@ -1,16 +1,28 @@
-# Lumina
+# Illustirous-Lumina
 
 Lumina is a powerful image generation model based on Diffusion Transformers (DiT) architecture. Originally developed by [Alpha-VLLM Lumina-Image-2.0](https://github.com/Alpha-VLLM/Lumina-Image-2.0), we've fine-tuned this model for our experimental purposes and are providing this demo to showcase its capabilities. This documentation provides instructions for setting up and running our tuned version of Lumina.
 
+## Prerequisites
+
+Before setting up the environment, you need to prepare access tokens for the following models:
+
+1. [GoogleGemma-2-2b](https://huggingface.co/google/gemma-2-2b) - You will need a gated access token for this model
+2. [BlackForestLabs FLUX.1-dev](https://huggingface.co/google/gemma-2-2b) - You will need a gated acess token for this model
+
+Make sure you have a requested and reveived access to these models on HuggingFace before proceeding with the setup.
+
+## Testing Environment
+Our setup has been tested on Ubuntu 20.04.6 LTS. While the model may work on other operating systems, we recommend using the same environment for optimal performance and to avoid compatibility issue.
+
 ## Environment Setup
 
-**1. Clone Git Repository**
+### **1. Clone Git Repository**
 
 ```bash
 git clone https://github.com/OnomaAI/Illustrious-Lumina.git
 ```
 
-**1. Create a Virtual Environment**
+### **2. Create a Virtual Environment**
 
 Using venv:
 
@@ -20,16 +32,20 @@ source lumina/bin/acitvate
 pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-**2. Install dependenices**
+### **3. Install dependenices**
 
 ```bash
 pip install -r requirement.txt
 ```
 
-**3. Install flash-attn**
+### **4. Install flash-attn**
+
 ```bash
 pip install flash-attn --no-build-isolation
 ```
+
+**Note for Windows Users:** Flash Attention installation can be challenging on Windows. Please refer to the [official Flash Attention GitHub repository](https://github.com/Dao-AILab/flash-attention) for detailed installation instructions specific to Windows.
+
 
 ## **Running Lumina with Gradio Demo**
 
