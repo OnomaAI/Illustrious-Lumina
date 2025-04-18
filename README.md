@@ -51,4 +51,5 @@ python demo-porper.py \
 
 After execution, access the specified port in your web browser to experience Lumina's image generation capabilities.
 
-![Screenshot 2025-04-18 at 17 43 28](https://github.com/user-attachments/assets/4895d30d-df1d-48b1-b19b-e8eaeb6ec8c2)
+
+![Screenshot 2025-04-18 at 17 43 28](https://github.com/user-attachments/assets/81086f80-d8e4-4dd0-9f9c-dea7dde38abd)
