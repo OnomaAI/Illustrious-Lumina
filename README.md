@@ -20,14 +20,6 @@ source lumina/bin/acitvate
 pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Using conda:
-
-```bash
-conda create -n lumina
-conda activate lumina
-conda install python=3.11 pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 pytorch-cuda=12.1 -c pytorch -c nvidia -y
-```
-
 **2. Install dependenices**
 
 ```bash
