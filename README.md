@@ -7,7 +7,7 @@ Lumina is a powerful image generation model based on Diffusion Transformers (DiT
 **1. Clone Git Repository**
 
 ```bash
-git clone 
+git clone https://github.com/OnomaAI/Illustrious-Lumina.git
 ```
 
 **1. Create a Virtual Environment**
