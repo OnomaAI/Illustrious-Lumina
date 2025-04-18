@@ -31,7 +31,7 @@ conda install python=3.11 pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 p
 **2. Install dependenices**
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirement.txt
 ```
 
 **3. Install flash-attn**
