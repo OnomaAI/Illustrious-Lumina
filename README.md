@@ -15,8 +15,6 @@ Before setting up the environment, you need to prepare:
 
    Thes files can be found in our [Hugging Face](https://huggingface.co/OnomaAIResearch/Illustrious-Lumina-v0.03) and are essential for running the model.
 
-Make sure you have requested and received access to the Hugging Face models before proceeding with the setup.
-
 Make sure you have a requested and reveived access to these models on HuggingFace before proceeding with the setup.
 
 ## Important Notes
