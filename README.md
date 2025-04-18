@@ -4,10 +4,18 @@ Lumina is a powerful image generation model based on Diffusion Transformers (DiT
 
 ## Prerequisites
 
-Before setting up the environment, you need to prepare access tokens for the following models:
+Before setting up the environment, you need to prepare:
+1. Access tokens for the following models:
+   -  [GoogleGemma-2-2b](https://huggingface.co/google/gemma-2-2b) - You will need a gated access token for this model
+   -   [BlackForestLabs FLUX.1-dev](https://huggingface.co/google/gemma-2-2b) - You will need a gated acess token for this model
 
-1. [GoogleGemma-2-2b](https://huggingface.co/google/gemma-2-2b) - You will need a gated access token for this model
-2. [BlackForestLabs FLUX.1-dev](https://huggingface.co/google/gemma-2-2b) - You will need a gated acess token for this model
+2. Required model files from out GitHub repository:
+   - `model_args.pth`- Contains model configuration parameters
+   - `consolidated_ema.00-of-01.pth`- Contains model weights
+
+   Thes files can be found in our [Hugging Face](https://huggingface.co/OnomaAIResearch/Illustrious-Lumina-v0.03) and are essential for running the model.
+
+Make sure you have requested and received access to the Hugging Face models before proceeding with the setup.
 
 Make sure you have a requested and reveived access to these models on HuggingFace before proceeding with the setup.
 
