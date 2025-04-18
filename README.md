@@ -9,7 +9,7 @@ Before setting up the environment, you need to prepare:
    -  [GoogleGemma-2-2b](https://huggingface.co/google/gemma-2-2b) - You will need a gated access token for this model
    -   [BlackForestLabs FLUX.1-dev](https://huggingface.co/google/gemma-2-2b) - You will need a gated acess token for this model
 
-2. Required model files from out GitHub repository:
+2. Required model files from out Hugging Face repository:
    - `model_args.pth`- Contains model configuration parameters
    - `consolidated_ema.00-of-01.pth`- Contains model weights
 
