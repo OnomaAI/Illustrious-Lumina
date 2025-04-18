@@ -14,7 +14,7 @@ Make sure you have a requested and reveived access to these models on HuggingFac
 ## Important Notes
 **This is an experimental model:** Illustrious-Lumina-v0.03 is currently in the experimental stage and max exhibit unpredictable behaviors or limitations.
 
-**Prompt**: Due to the characteristics of the DiT architecture, detailed and specific prompts yield significantly better results. Vauge or short prompts may lead to inconsistent or unexpected outputs. We recommend providing comprehensive descriptions including subject, style, composition, and other visual elements you wish to see in the geenerated image.
+**Prompt**: Due to the characteristics of the DiT architecture, detailed and specific prompts yield significantly better results. Vauge or short prompts may lead to inconsistent or unexpected outputs. We recommend providing comprehensive descriptions including subject, style, composition, and other visual elements you wish to see in the generated image.
 
 ## Testing Environment
 Our setup has been tested on Ubuntu 20.04.6 LTS. While the model may work on other operating systems, we recommend using the same environment for optimal performance and to avoid compatibility issue.
