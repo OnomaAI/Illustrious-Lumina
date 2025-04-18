@@ -17,7 +17,7 @@ Using venv:
 ```bash
 python3.11 -m venv lumina
 source lumina/bin/acitvate
-pip install pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 pytorch-cuda=12.1 -c pytorch -c nvidia -y
+pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
 ```
 
 Using conda:
