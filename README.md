@@ -1,4 +1,4 @@
-# Illustirous-Lumina
+# Illustrious-Lumina
 
 Lumina is a powerful image generation model based on Diffusion Transformers (DiT) architecture. Originally developed by [Alpha-VLLM Lumina-Image-2.0](https://github.com/Alpha-VLLM/Lumina-Image-2.0), we've fine-tuned this model for our experimental purposes and are providing this demo to showcase its capabilities. Our fine-tuned model is available on [Hugging Face](https://huggingface.co/OnomaAIResearch/Illustrious-Lumina-v0.03). This documentation provides instructions for setting up and running our tuned version of Lumina.
 
