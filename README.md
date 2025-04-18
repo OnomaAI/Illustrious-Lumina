@@ -43,7 +43,7 @@ pip install flash-attn --no-build-isolation
 
 - Gradio Demo
 ```bash
-python demo-porper.py \
+python demo-proper.py \
   --ckpt /path/to/your/ckpt \
   --res 1024 \
   --port 12123 \
