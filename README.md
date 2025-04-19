@@ -63,12 +63,11 @@ pip install flash-attn --no-build-isolation
 - Gradio Demo
 ```bash
 python demo-proper.py \
-  --ckpt /path/to/your/ckpt \
-  --res 1024 \
-  --port 12123 \
+  --ckpt "path/to/your/checkpoint.pth" \
+  --model_args_path "path/to/your/model_args.pth" 
 ```
 
 After execution, access the specified port in your web browser to experience Lumina's image generation capabilities.
 
 
-![Screenshot 2025-04-18 at 17 43 28](https://github.com/user-attachments/assets/81086f80-d8e4-4dd0-9f9c-dea7dde38abd)
+![gradio_image](gradio_image.png)

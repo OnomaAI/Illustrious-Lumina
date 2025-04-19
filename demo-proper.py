@@ -17,11 +17,19 @@ from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 import models # Assuming models.py is in the same directory or accessible
 from transport import Sampler, create_transport # Assuming transport.py is accessible
+import argparse
 
+
+# --- Parse command line arguments ---
+parser = argparse.ArgumentParser(description="Arguments for model loading and inference.")
+parser.add_argument('--ckpt_path', type=str, default="checkpoint/consolidated.00-of-01.pth", help="Path to checkpoint file")
+parser.add_argument('--model_args_path', type=str, default="checkpoint/model_args.pth", help="Path to model args file")
+
+args = parser.parse_args()
 # --- Globals for Models and Config ---
 # --- Set these paths and configurations correctly ---
-CKPT_PATH = "checkpoint/consolidated.00-of-01.pth" # IMPORTANT: Set path to your specific checkpoint file
-MODEL_ARGS_PATH = "checkpoint/model_args.pth" # IMPORTANT: Set path to model args
+CKPT_PATH = args.ckpt_path # IMPORTANT: Set path to your specific checkpoint file
+MODEL_ARGS_PATH = args.model_args_path # IMPORTANT: Set path to model args
 VAE_TYPE = os.environ.get("VAE_TYPE", "flux") # Or "ema", "mse", "sdxl"
 PRECISION = os.environ.get("PRECISION", "bf16") # Or "fp32"
 TEXT_ENCODER_MODEL = os.environ.get("TEXT_ENCODER_MODEL", 'google/gemma-2-2B')
